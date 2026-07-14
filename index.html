@@ -54,13 +54,6 @@
       border-bottom: 1px solid #bbb;
     }
     .location-head strong { font-size: 13px; }
-    .mode {
-      display: flex;
-      gap: 8px;
-      font-size: 12px;
-      font-weight: normal;
-    }
-    .mode label { white-space: nowrap; }
     .field {
       display: block;
       min-width: 0;
@@ -193,6 +186,60 @@
     }
     tr.additional td { background: #f5f5f5; }
     .hidden { display: none !important; }
+    #login-screen {
+      width: 310px;
+      margin: 70px auto 0;
+      padding: 14px;
+      border: 1px solid #777;
+      background: #eee;
+    }
+    #login-screen h1 { margin-bottom: 12px; }
+    #login-screen label {
+      display: block;
+      margin-top: 8px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    #login-screen input[type="text"],
+    #login-screen input[type="password"] {
+      width: 100%;
+      height: 31px;
+      margin-top: 3px;
+      padding: 4px 6px;
+      border: 1px solid #777;
+      border-radius: 0;
+      background: #fff;
+      color: #111;
+      font: 14px Arial, Helvetica, sans-serif;
+    }
+    #login-screen button,
+    #logout {
+      min-height: 28px;
+      padding: 3px 8px;
+      border: 1px solid #777;
+      border-radius: 0;
+      background: #eee;
+      color: #111;
+      font: inherit;
+      cursor: pointer;
+    }
+    #login-screen button {
+      width: 100%;
+      margin-top: 12px;
+      background: #ddd;
+    }
+    #login-message {
+      min-height: 17px;
+      margin-top: 8px;
+      color: #a00000;
+      font-size: 12px;
+    }
+    .top-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 7px;
+    }
     @media (max-width: 780px) {
       .controls { grid-template-columns: 1fr; }
       .checks { grid-column: 1; }
@@ -209,25 +256,34 @@
   </style>
 </head>
 <body>
-  <main>
+  <section id="login-screen">
+    <form id="login-form">
+      <h1>FCL rate calc</h1>
+      <label>Username
+        <input id="login-username" type="text" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input id="login-password" type="password" autocomplete="current-password">
+      </label>
+      <button type="submit">Login</button>
+      <div id="login-message"></div>
+    </form>
+  </section>
+
+  <main id="app" class="hidden">
     <div class="top">
       <h1>FCL rate calc</h1>
-      <div>
+      <div class="top-actions">
         <span id="status">loading...</span>
         <button id="open-files" class="file-button hidden" type="button">Open XLSX</button>
+        <button id="logout" type="button">Logout</button>
         <input id="file-input" class="hidden" type="file" multiple accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       </div>
     </div>
 
     <section class="controls">
       <div class="location-box">
-        <div class="location-head">
-          <strong>POL</strong>
-          <span class="mode">
-            <label><input type="radio" name="pol-mode" value="name" checked> Name</label>
-            <label><input type="radio" name="pol-mode" value="code"> Code</label>
-          </span>
-        </div>
+        <div class="location-head"><strong>POL</strong></div>
         <label class="field">Country
           <div id="pol-country" class="combo"><input type="text" autocomplete="off" disabled><div class="combo-menu hidden"></div></div>
         </label>
@@ -237,13 +293,7 @@
       </div>
 
       <div class="location-box">
-        <div class="location-head">
-          <strong>POD</strong>
-          <span class="mode">
-            <label><input type="radio" name="pod-mode" value="name" checked> Name</label>
-            <label><input type="radio" name="pod-mode" value="code"> Code</label>
-          </span>
-        </div>
+        <div class="location-head"><strong>POD</strong></div>
         <label class="field">Country
           <div id="pod-country" class="combo"><input type="text" autocomplete="off" disabled><div class="combo-menu hidden"></div></div>
         </label>
@@ -292,6 +342,7 @@
       const GITHUB_BRANCH = 'main';
       const DEFAULT_RATE_FILE = 'blu-wk29-26 selling rates.xlsx';
       const DEFAULT_LOC_FILE = 'LocCodes.xlsx';
+      const USERS_FILE = 'users.json';
       const FX_URL = 'https://api.frankfurter.dev/v2/rates?base=USD';
       const params = new URLSearchParams(location.search);
       const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
@@ -300,6 +351,13 @@
         : null;
 
       const elements = {
+        app: document.getElementById('app'),
+        loginScreen: document.getElementById('login-screen'),
+        loginForm: document.getElementById('login-form'),
+        loginUsername: document.getElementById('login-username'),
+        loginPassword: document.getElementById('login-password'),
+        loginMessage: document.getElementById('login-message'),
+        logout: document.getElementById('logout'),
         status: document.getElementById('status'),
         openFiles: document.getElementById('open-files'),
         fileInput: document.getElementById('file-input'),
@@ -311,9 +369,7 @@
         validity: document.getElementById('validity'),
         totalLabel: document.getElementById('total-label'),
         total: document.getElementById('total'),
-        breakdown: document.getElementById('breakdown'),
-        polModes: [...document.querySelectorAll('input[name="pol-mode"]')],
-        podModes: [...document.querySelectorAll('input[name="pod-mode"]')]
+        breakdown: document.getElementById('breakdown')
       };
 
       const state = {
@@ -321,8 +377,8 @@
         locations: new Map(),
         fx: null,
         fxError: null,
-        polMode: 'name',
-        podMode: 'name',
+        users: [],
+        appStarted: false,
         rateFileName: '',
         locFileName: ''
       };
@@ -1116,30 +1172,23 @@
         return state.locations.get(code) ?? '';
       }
 
-      function locationLabel(code, mode) {
+      function locationLabel(code) {
         const name = locationName(code);
-        if (!name) return code;
-        return mode === 'code' ? `${code} - ${name}` : `${name} (${code})`;
+        return name ? `${code} - ${name}` : code;
       }
 
       function locationRouteLabel(code) {
-        const name = locationName(code);
-        return name ? `${name} (${code})` : code;
+        return locationLabel(code);
       }
 
-      function locationOptions(codes, mode) {
-        const list = [...codes];
-        list.sort((a, b) => {
-          if (mode === 'code') return collator.compare(a, b);
-          const nameCompare = collator.compare(locationName(a) || a, locationName(b) || b);
-          return nameCompare || collator.compare(a, b);
-        });
+      function locationOptions(codes) {
+        const list = [...codes].sort(collator.compare);
         return list.map(code => {
           const name = locationName(code);
           const country = countryCode(code);
           return {
             value: code,
-            label: locationLabel(code, mode),
+            label: locationLabel(code),
             search: `${code} ${name} ${country} ${countryName(country)}`,
             aliases: [code, name]
           };
@@ -1152,7 +1201,7 @@
         );
         const options = sorted.map(code => ({
           value: code,
-          label: countryName(code) === code ? code : `${countryName(code)} (${code})`,
+          label: countryName(code) === code ? code : `${code} - ${countryName(code)}`,
           search: `${code} ${countryName(code)}`,
           aliases: [code, countryName(code)]
         }));
@@ -1180,7 +1229,7 @@
         const preferred = pols.includes(preferredPol)
           ? preferredPol
           : pols.includes('SEGOT') ? 'SEGOT' : pols[0];
-        combos.pol.setOptions(locationOptions(pols, state.polMode), preferred);
+        combos.pol.setOptions(locationOptions(pols), preferred);
         updatePodCountries();
       }
 
@@ -1199,7 +1248,7 @@
         const pods = [...(state.data.polToPods.get(combos.pol.value) ?? [])]
           .filter(code => !country || countryCode(code) === country);
         const preferred = pods.includes(preferredPod) ? preferredPod : pods[0];
-        combos.pod.setOptions(locationOptions(pods, state.podMode), preferred);
+        combos.pod.setOptions(locationOptions(pods), preferred);
         updateContainers();
       }
 
@@ -1233,7 +1282,6 @@
         elements.origin.disabled = false;
         elements.freight.disabled = false;
         elements.destination.disabled = false;
-        for (const input of [...elements.polModes, ...elements.podModes]) input.disabled = false;
       }
 
       function formatMoney(amount, currency, forceDecimals = false) {
@@ -1492,27 +1540,42 @@
         }
       });
 
-      for (const input of elements.polModes) {
-        input.addEventListener('change', () => {
-          if (!input.checked) return;
-          state.polMode = input.value;
-          updatePols(combos.pol.value);
-        });
-      }
-      for (const input of elements.podModes) {
-        input.addEventListener('change', () => {
-          if (!input.checked) return;
-          state.podMode = input.value;
-          updatePods(combos.pod.value);
-        });
-      }
-
       elements.container.addEventListener('change', render);
       elements.origin.addEventListener('change', render);
       elements.freight.addEventListener('change', render);
       elements.destination.addEventListener('change', render);
 
-      (async () => {
+      function normaliseUsers(payload) {
+        const source = Array.isArray(payload) ? payload : payload?.users ?? payload;
+        if (Array.isArray(source)) {
+          return source.map(item => ({
+            username: String(item?.username ?? '').trim(),
+            password: String(item?.password ?? '')
+          })).filter(item => item.username);
+        }
+        if (source && typeof source === 'object') {
+          return Object.entries(source).map(([username, password]) => ({
+            username: String(username).trim(),
+            password: String(password ?? '')
+          })).filter(item => item.username);
+        }
+        return [];
+      }
+
+      async function loadUsers() {
+        const response = await fetch(new URL(USERS_FILE, location.href), { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Login file ${response.status}`);
+        const payload = await response.json();
+        const users = normaliseUsers(payload);
+        if (!users.length) throw new Error('No users');
+        return users;
+      }
+
+      async function startApp() {
+        elements.loginScreen.classList.add('hidden');
+        elements.app.classList.remove('hidden');
+        if (state.appStarted) return;
+        state.appStarted = true;
         const fxPromise = startFxTask();
         try {
           setStatus('finding files...');
@@ -1520,6 +1583,48 @@
           await useWorkbooks(files, fxPromise);
         } catch (error) {
           showFileButton(error instanceof Error ? error.message : 'XLSX?');
+        }
+      }
+
+      function showLogin(message = '') {
+        elements.app.classList.add('hidden');
+        elements.loginScreen.classList.remove('hidden');
+        elements.loginMessage.textContent = message;
+        elements.loginPassword.value = '';
+        elements.loginUsername.focus();
+      }
+
+      elements.loginForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const username = elements.loginUsername.value.trim();
+        const password = elements.loginPassword.value;
+        const match = state.users.some(user => user.username === username && user.password === password);
+        if (!match) {
+          elements.loginMessage.textContent = 'Wrong username or password';
+          elements.loginPassword.select();
+          return;
+        }
+        sessionStorage.setItem('rateToolUser', username);
+        elements.loginMessage.textContent = '';
+        startApp();
+      });
+
+      elements.logout.addEventListener('click', () => {
+        sessionStorage.removeItem('rateToolUser');
+        showLogin();
+      });
+
+      (async () => {
+        try {
+          state.users = await loadUsers();
+          const savedUser = sessionStorage.getItem('rateToolUser');
+          if (savedUser && state.users.some(user => user.username === savedUser)) {
+            await startApp();
+          } else {
+            showLogin();
+          }
+        } catch (error) {
+          showLogin(error instanceof Error ? error.message : 'Login file error');
         }
       })();
     })();
